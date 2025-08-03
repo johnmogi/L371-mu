@@ -31,6 +31,9 @@ class LD_Instructor_Quiz_Categories {
         
         // Add admin debug page
         add_action('admin_menu', array($this, 'add_debug_page'));
+        
+        // Add reassignment debug page
+        add_action('admin_menu', array($this, 'add_reassignment_debug_page'));
     }
     
     /**
@@ -963,7 +966,7 @@ class LD_Instructor_Quiz_Categories {
     public function add_debug_page() {
         add_submenu_page(
             'edit.php?post_type=sfwd-quiz',
-            'Single Category Debug Test',
+            'Multi-Category Debug Test',
             '🔧 Debug Test',
             'manage_options',
             'ld-single-category-test',
@@ -1141,8 +1144,214 @@ class LD_Instructor_Quiz_Categories {
             echo "</div>";
             
             // Log to debug
-            error_log("LD Quiz Categories: Found " . count($questions_to_attach) . " questions in Category {$category->name}. Attached to Quiz #{$quiz_id}.");
+            error_log("LD Quiz Categories: Found " . count($questions_to_attach) . " questions from selected categories. Attached to Quiz #{$quiz_id}.");
         }
+        
+        echo "<hr>";
+        echo "<h2>🔄 Restoration Test</h2>";
+        echo "<p>Testing if we can restore questions after category disconnection...</p>";
+        
+        // Test the same logic that runs on save
+        $this->populate_quiz_with_questions($quiz_id, $test_categories);
+        
+        // Re-check question count
+        $final_questions = get_post_meta($quiz_id, 'ld_quiz_questions', true);
+        $final_count = is_array($final_questions) ? count($final_questions) : 0;
+        
+        echo "<div class='notice notice-info'>";
+        echo "<p><strong>🔄 After running populate_quiz_with_questions():</strong></p>";
+        echo "<p>Final question count: <strong>{$final_count}</strong></p>";
+        if ($final_count > 0) {
+            echo "<p style='color: green;'>✅ <strong>SUCCESS:</strong> Questions restored successfully!</p>";
+        } else {
+            echo "<p style='color: red;'>❌ <strong>FAILED:</strong> Questions still not restored.</p>";
+        }
+        echo "</div>";
+    }
+    
+    /**
+     * Add reassignment debug page
+     */
+    public function add_reassignment_debug_page() {
+        add_submenu_page(
+            'edit.php?post_type=sfwd-quiz',
+            'Quiz Reassignment Debug',
+            '🔄 Fix Quiz',
+            'manage_options',
+            'ld-reassignment-debug',
+            array($this, 'render_reassignment_debug_page')
+        );
+    }
+    
+    /**
+     * Render the reassignment debug page
+     */
+    public function render_reassignment_debug_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die('You do not have sufficient permissions to access this page.');
+        }
+        
+        echo '<div class="wrap">';
+        echo '<h1>🔄 Quiz Question Reassignment Debug</h1>';
+        echo '<p>Diagnose and fix quiz question reassignment issues...</p>';
+        
+        // Run the test if requested
+        if (isset($_GET['fix_quiz']) && $_GET['fix_quiz'] === '1') {
+            $this->fix_quiz_reassignment();
+        } else {
+            echo '<div class="notice notice-warning">';
+            echo '<p><strong>⚠️ Issue Detected:</strong> Quiz 10592 shows 0 questions but had 300 questions before category disconnection.</p>';
+            echo '</div>';
+            echo '<p><a href="' . admin_url('edit.php?post_type=sfwd-quiz&page=ld-reassignment-debug&fix_quiz=1') . '" class="button button-primary">🔧 Diagnose & Fix Quiz 10592</a></p>';
+            echo '<p><em>This will analyze why questions aren\'t being reassigned and attempt to fix it.</em></p>';
+        }
+        
+        echo '</div>';
+    }
+    
+    /**
+     * Fix quiz reassignment issues
+     */
+    public function fix_quiz_reassignment() {
+        $quiz_id = 10592;
+        echo "<h2>🔍 Diagnostic Analysis</h2>";
+        echo "<p><strong>Quiz ID:</strong> {$quiz_id}</p>";
+        
+        // Step 1: Check current state
+        $current_questions = get_post_meta($quiz_id, 'ld_quiz_questions', true);
+        $current_count = is_array($current_questions) ? count($current_questions) : 0;
+        $selected_categories = get_post_meta($quiz_id, '_ld_quiz_question_categories', true);
+        
+        echo "<p><strong>Current Questions:</strong> {$current_count}</p>";
+        echo "<p><strong>Selected Categories:</strong> " . (is_array($selected_categories) ? implode(', ', $selected_categories) : 'None') . "</p>";
+        
+        if (empty($selected_categories)) {
+            echo "<div class='notice notice-error'>";
+            echo "<p>❌ <strong>PROBLEM FOUND:</strong> No categories are currently selected!</p>";
+            echo "<p>You need to select categories in the quiz edit screen first, then save the quiz.</p>";
+            echo "<p><a href='" . admin_url("post.php?post={$quiz_id}&action=edit") . "' class='button'>📝 Edit Quiz & Select Categories</a></p>";
+            echo "</div>";
+            return;
+        }
+        
+        echo "<h3>🔍 Testing Category Data</h3>";
+        
+        // Test each selected category
+        foreach ($selected_categories as $category_id) {
+            $category = get_term($category_id, 'ld_quiz_category');
+            echo "<p><strong>Category:</strong> {$category->name} (ID: {$category_id}, Count: {$category->count})</p>";
+            
+            // Find quizzes in this category
+            $quizzes_in_category = get_posts(array(
+                'post_type' => 'sfwd-quiz',
+                'post_status' => 'publish',
+                'posts_per_page' => 5,
+                'fields' => 'ids',
+                'tax_query' => array(
+                    array(
+                        'taxonomy' => 'ld_quiz_category',
+                        'field' => 'term_id',
+                        'terms' => $category_id
+                    )
+                )
+            ));
+            
+            echo "<p>  → Found <strong>" . count($quizzes_in_category) . "</strong> quizzes in this category</p>";
+            
+            if (!empty($quizzes_in_category)) {
+                $total_questions_available = 0;
+                foreach (array_slice($quizzes_in_category, 0, 3) as $source_quiz_id) {
+                    $quiz_title = get_the_title($source_quiz_id);
+                    $quiz_questions = get_post_meta($source_quiz_id, 'ld_quiz_questions', true);
+                    $question_count = is_array($quiz_questions) ? count($quiz_questions) : 0;
+                    $total_questions_available += $question_count;
+                    echo "<p>    • {$quiz_title}: {$question_count} questions</p>";
+                }
+                echo "<p>  → <strong>Total available questions:</strong> {$total_questions_available}</p>";
+            }
+        }
+        
+        echo "<h3>🚀 Attempting Fix</h3>";
+        
+        // Force trigger the population logic
+        echo "<p>Calling populate_quiz_with_questions()...</p>";
+        $this->populate_quiz_with_questions($quiz_id, $selected_categories);
+        
+        // Check if it worked
+        $new_questions = get_post_meta($quiz_id, 'ld_quiz_questions', true);
+        $new_count = is_array($new_questions) ? count($new_questions) : 0;
+        
+        echo "<div class='notice " . ($new_count > 0 ? 'notice-success' : 'notice-error') . "'>";
+        if ($new_count > 0) {
+            echo "<h3>✅ SUCCESS!</h3>";
+            echo "<p><strong>Questions restored:</strong> {$new_count}</p>";
+            echo "<p><a href='" . admin_url("post.php?post={$quiz_id}&action=edit") . "' class='button button-primary'>📝 View Updated Quiz</a></p>";
+        } else {
+            echo "<h3>❌ FAILED</h3>";
+            echo "<p>Questions still not restored. This indicates a deeper issue with the population logic.</p>";
+            
+            // Additional debugging
+            echo "<h4>🔍 Deep Debug</h4>";
+            
+            // Check if the save hook is being blocked
+            echo "<p>Testing direct population bypass...</p>";
+            
+            // Try to manually populate with a simple approach
+            if (!empty($selected_categories)) {
+                $test_questions = array();
+                
+                foreach ($selected_categories as $cat_id) {
+                    $quizzes = get_posts(array(
+                        'post_type' => 'sfwd-quiz',
+                        'post_status' => 'publish',
+                        'posts_per_page' => 2,
+                        'fields' => 'ids',
+                        'tax_query' => array(
+                            array(
+                                'taxonomy' => 'ld_quiz_category',
+                                'field' => 'term_id',
+                                'terms' => $cat_id
+                            )
+                        )
+                    ));
+                    
+                    foreach ($quizzes as $source_quiz) {
+                        $source_questions = get_post_meta($source_quiz, 'ld_quiz_questions', true);
+                        if (is_array($source_questions)) {
+                            $test_questions = array_merge($test_questions, array_keys($source_questions));
+                        }
+                    }
+                }
+                
+                $test_questions = array_unique($test_questions);
+                $test_questions = array_slice($test_questions, 0, 20);
+                
+                if (!empty($test_questions)) {
+                    $formatted_test = array();
+                    foreach ($test_questions as $index => $q_id) {
+                        $formatted_test[$q_id] = $index + 1;
+                    }
+                    
+                    echo "<p>Manual test found " . count($test_questions) . " questions. Attempting direct update...</p>";
+                    
+                    $manual_result = update_post_meta($quiz_id, 'ld_quiz_questions', $formatted_test);
+                    update_post_meta($quiz_id, 'ld_quiz_questions_dirty', time());
+                    
+                    if ($manual_result) {
+                        echo "<p style='color: green;'>✅ Manual update successful!</p>";
+                        echo "<p><a href='" . admin_url("post.php?post={$quiz_id}&action=edit") . "' class='button button-primary'>📝 Check Quiz Now</a></p>";
+                    } else {
+                        echo "<p style='color: red;'>❌ Manual update also failed.</p>";
+                    }
+                } else {
+                    echo "<p style='color: red;'>❌ No questions found even in manual test.</p>";
+                }
+            }
+        }
+        echo "</div>";
+        
+        echo "<hr>";
+        echo "<p><small>Debug completed at " . date('Y-m-d H:i:s') . "</small></p>";
     }
     
     /**
