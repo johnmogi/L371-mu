@@ -23,6 +23,14 @@ class WC_LearnDash_Access_Manager {
     public function __construct() {
         add_action('plugins_loaded', [$this, 'init']);
         add_action('admin_enqueue_scripts', [$this, 'admin_scripts']);
+        
+        // Add AJAX handlers for course expiry editing
+        add_action('wp_ajax_update_course_expiry', [$this, 'ajax_update_course_expiry']);
+        add_action('wp_ajax_nopriv_update_course_expiry', [$this, 'ajax_update_course_expiry']);
+        add_action('wp_ajax_quick_set_course_expiry', array($this, 'ajax_quick_set_course_expiry'));
+        add_action('wp_ajax_get_user_course_data', array($this, 'ajax_get_user_course_data'));
+        add_action('wp_ajax_toggle_course_access', array($this, 'ajax_toggle_course_access'));
+        add_action('wp_ajax_get_simple_course_status', array($this, 'ajax_get_simple_course_status'));
     }
     
     public function init() {
@@ -397,6 +405,287 @@ class WC_LearnDash_Access_Manager {
             });
             ');
         }
+    }
+    
+    /**
+     * AJAX handler for updating course expiration dates
+     */
+    public function ajax_update_course_expiry() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'update_course_expiry')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        // Check user capabilities
+        if (!current_user_can('edit_users')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+        
+        // Get and validate parameters
+        $user_id = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
+        $new_date = isset($_POST['new_date']) ? sanitize_text_field($_POST['new_date']) : '';
+        
+        if (!$user_id || !$new_date) {
+            wp_send_json_error('Invalid parameters');
+        }
+        
+        // Validate date format
+        $date_obj = DateTime::createFromFormat('Y-m-d', $new_date);
+        if (!$date_obj) {
+            wp_send_json_error('Invalid date format');
+        }
+        
+        // Convert to timestamp (end of day)
+        $new_timestamp = strtotime($new_date . ' 23:59:59');
+        if (!$new_timestamp) {
+            wp_send_json_error('Invalid date');
+        }
+        
+        // Get user's current course access data
+        $user_meta = get_user_meta($user_id);
+        $updated_courses = [];
+        
+        // Update all course expiration dates for this user
+        foreach ($user_meta as $key => $value) {
+            if (preg_match('/^course_(\d+)_access_expires$/', $key, $matches)) {
+                $course_id = $matches[1];
+                $old_timestamp = $value[0];
+                
+                // Update the course access expiration
+                update_user_meta($user_id, $key, $new_timestamp);
+                
+                // Also update LearnDash course access if function exists
+                if (function_exists('ld_update_course_access')) {
+                    ld_update_course_access($user_id, $course_id, false, $new_timestamp);
+                }
+                
+                $updated_courses[] = [
+                    'course_id' => $course_id,
+                    'course_title' => get_the_title($course_id),
+                    'old_date' => date('d/m/Y', $old_timestamp),
+                    'new_date' => date('d/m/Y', $new_timestamp)
+                ];
+            }
+        }
+        
+        if (empty($updated_courses)) {
+            wp_send_json_error('No course access found for this user');
+        }
+        
+        // Log the update for debugging
+        error_log(sprintf(
+            'WC LearnDash Access Manager: Updated course expiration for user %d. Courses: %s',
+            $user_id,
+            json_encode($updated_courses)
+        ));
+        
+        wp_send_json_success([
+            'message' => sprintf('Updated %d course(s) expiration date', count($updated_courses)),
+            'updated_courses' => $updated_courses,
+            'new_date' => date('d/m/Y', $new_timestamp)
+        ]);
+    }
+    
+    /**
+     * AJAX handler for quick set course expiry
+     */
+    public function ajax_quick_set_course_expiry() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'quick_set_course_expiry')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        // Check user capabilities
+        if (!current_user_can('edit_users')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+        
+        $user_id = intval($_POST['user_id']);
+        $course_id = intval($_POST['course_id']);
+        $expiry_type = sanitize_text_field($_POST['expiry_type']);
+        $custom_date = sanitize_text_field($_POST['custom_date']);
+        
+        if (!$user_id || !$course_id) {
+            wp_send_json_error('Invalid parameters');
+        }
+        
+        $expiry_timestamp = 0;
+        
+        switch ($expiry_type) {
+            case '1_week':
+                $expiry_timestamp = current_time('timestamp') + (7 * DAY_IN_SECONDS);
+                break;
+            case '1_month':
+                $expiry_timestamp = current_time('timestamp') + (30 * DAY_IN_SECONDS);
+                break;
+            case '3_months':
+                $expiry_timestamp = current_time('timestamp') + (90 * DAY_IN_SECONDS);
+                break;
+            case '1_year':
+                $expiry_timestamp = current_time('timestamp') + (365 * DAY_IN_SECONDS);
+                break;
+            case 'custom':
+                if ($custom_date) {
+                    $expiry_timestamp = strtotime($custom_date . ' 23:59:59');
+                }
+                break;
+            case 'permanent':
+                $expiry_timestamp = 0;
+                break;
+        }
+        
+        if ($expiry_type !== 'permanent' && !$expiry_timestamp) {
+            wp_send_json_error('Invalid expiration date');
+        }
+        
+        // Update user meta
+        $meta_key = 'course_' . $course_id . '_access_expires';
+        update_user_meta($user_id, $meta_key, $expiry_timestamp);
+        
+        // Update LearnDash if available
+        if (function_exists('ld_update_course_access')) {
+            ld_update_course_access($user_id, $course_id, false, $expiry_timestamp);
+        }
+        
+        wp_send_json_success([
+            'message' => 'Course expiration updated successfully',
+            'new_expiry' => $expiry_timestamp ? date('d/m/Y', $expiry_timestamp) : 'Permanent'
+        ]);
+    }
+    
+    /**
+     * AJAX handler to get user course data
+     */
+    public function ajax_get_user_course_data() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'get_user_course_data')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        $user_id = intval($_POST['user_id']);
+        if (!$user_id) {
+            wp_send_json_error('Invalid user ID');
+        }
+        
+        $user_meta = get_user_meta($user_id);
+        $courses = [];
+        
+        foreach ($user_meta as $key => $value) {
+            if (preg_match('/^course_(\d+)_access_expires$/', $key, $matches)) {
+                $course_id = $matches[1];
+                $expires_timestamp = $value[0];
+                
+                $courses[] = [
+                    'course_id' => $course_id,
+                    'course_title' => get_the_title($course_id),
+                    'expires' => $expires_timestamp,
+                    'expires_formatted' => $expires_timestamp ? date('d/m/Y', $expires_timestamp) : 'Permanent'
+                ];
+            }
+        }
+        
+        wp_send_json_success($courses);
+    }
+    
+    /**
+     * AJAX handler for simple toggle course access
+     */
+    public function ajax_toggle_course_access() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'toggle_course_access')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        // Check user capabilities
+        if (!current_user_can('edit_users')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+        
+        $user_id = intval($_POST['user_id']);
+        if (!$user_id) {
+            wp_send_json_error('Invalid user ID');
+        }
+        
+        $course_id = 123; // Default course ID - can be made configurable
+        $meta_key = 'course_' . $course_id . '_access_expires';
+        
+        // Check current access status
+        $current_expiry = get_user_meta($user_id, $meta_key, true);
+        $has_active_access = !$current_expiry || $current_expiry == 0 || $current_expiry > current_time('timestamp');
+        
+        if ($has_active_access) {
+            // Deactivate: Set to expired (yesterday)
+            $yesterday = current_time('timestamp') - DAY_IN_SECONDS;
+            update_user_meta($user_id, $meta_key, $yesterday);
+            
+            if (function_exists('ld_update_course_access')) {
+                ld_update_course_access($user_id, $course_id, true); // Remove access
+            }
+            
+            wp_send_json_success([
+                'message' => 'Course access deactivated',
+                'new_status' => 'inactive'
+            ]);
+        } else {
+            // Activate: Set to permanent (0 = no expiration)
+            update_user_meta($user_id, $meta_key, 0);
+            
+            if (function_exists('ld_update_course_access')) {
+                ld_update_course_access($user_id, $course_id, false, 0); // Grant permanent access
+            }
+            
+            wp_send_json_success([
+                'message' => 'Course access activated',
+                'new_status' => 'active'
+            ]);
+        }
+    }
+    
+    /**
+     * AJAX handler to get simple course status
+     */
+    public function ajax_get_simple_course_status() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'get_simple_course_status')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        $user_id = intval($_POST['user_id']);
+        if (!$user_id) {
+            wp_send_json_error('Invalid user ID');
+        }
+        
+        $user_meta = get_user_meta($user_id);
+        $has_active_access = false;
+        $course_count = 0;
+        
+        // Check for course access
+        foreach ($user_meta as $key => $value) {
+            if (preg_match('/^course_(\d+)_access_expires$/', $key, $matches)) {
+                $course_count++;
+                $expires_timestamp = $value[0];
+                
+                if (!$expires_timestamp || $expires_timestamp == 0 || $expires_timestamp > current_time('timestamp')) {
+                    $has_active_access = true;
+                    break;
+                }
+            }
+        }
+        
+        // Check LearnDash course enrollment as fallback
+        if (!$has_active_access && function_exists('learndash_user_get_enrolled_courses')) {
+            $enrolled_courses = learndash_user_get_enrolled_courses($user_id);
+            if (!empty($enrolled_courses)) {
+                $has_active_access = true;
+                $course_count = count($enrolled_courses);
+            }
+        }
+        
+        wp_send_json_success([
+            'has_access' => $has_active_access,
+            'course_count' => $course_count,
+            'status' => $has_active_access ? 'active' : 'inactive'
+        ]);
     }
     
     /**
