@@ -938,92 +938,314 @@ class Unified_Course_Expiration_Manager {
                 $success_messages[] = 'learndash_user_unenroll_course called';
             }
             
-            // Method 3: Remove from user course meta directly (using edc_ prefix)
-            $user_courses_result = $wpdb->get_var($wpdb->prepare(
-                "SELECT meta_value FROM edc_usermeta WHERE user_id = %d AND meta_key = '_sfwd-courses'",
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE 'course_%_access_expires'",
                 $user_id
             ));
-            if ($user_courses_result) {
-                $user_courses = maybe_unserialize($user_courses_result);
-                if (is_array($user_courses) && in_array($course_id, $user_courses)) {
-                    $user_courses = array_diff($user_courses, [$course_id]);
-                    $wpdb->replace(
-                        'edc_usermeta',
-                        [
-                            'user_id' => $user_id,
-                            'meta_key' => '_sfwd-courses',
-                            'meta_value' => maybe_serialize($user_courses)
-                        ],
-                        ['%d', '%s', '%s']
-                    );
-                    $success_messages[] = 'Removed from _sfwd-courses meta (edc_usermeta)';
-                }
+            $success_messages[] = 'Removed all course access expiration records';
+            
+            // Remove all group access records
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE 'group_%_access_from'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed all group access records';
+            
+            // Remove all group enrollment timestamps
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE 'learndash_group_%_enrolled_at'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed all group enrollment timestamps';
+            
+            // Remove all group user membership records
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE 'learndash_group_users_%'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed all group user membership records';
+            
+            // Remove all course enrollment records
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE 'learndash_course_%_enrolled_at'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed all course enrollment records';
+            
+            // Remove all course progress and activity meta
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE '%sfwd%'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed all course progress and activity meta';
+            
+            // === PHASE 2: WOOCOMMERCE INTEGRATION CLEANUP ===
+            
+            // Remove WooCommerce order-based course access
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE 'course_%_order_id'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed WooCommerce order-based course access';
+            
+            // Remove WooCommerce-LearnDash integration meta
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE '_learndash_woocommerce_%'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed WooCommerce-LearnDash integration meta';
+            
+            // Remove all WooCommerce subscription-based course access
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND (meta_key LIKE '%woocommerce%' OR meta_key LIKE '%subscription%' OR meta_key LIKE '%order%') AND meta_key LIKE '%course%'",
+                $user_id
+            ));
+            $success_messages[] = 'Removed all WooCommerce subscription-based course access';
+            
+            // === PHASE 3: LEARNDASH ACTIVITY CLEANUP ===
+            
+            // Remove all user activity records from LearnDash activity table
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_learndash_user_activity WHERE user_id = %d",
+                $user_id
+            ));
+            $success_messages[] = 'Removed all LearnDash activity records';
+            
+            // === PHASE 4: POSTMETA CLEANUP (COURSE AND GROUP LISTS) ===
+            
+            // Remove user from course access lists
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(meta_value, 'i:%d;', '') WHERE meta_key = 'course_access_list' AND meta_value LIKE %s",
+                $user_id,
+                '%i:' . $user_id . ';%'
+            ));
+            $success_messages[] = 'Removed from course access lists';
+            
+            // Remove user from course users lists
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(meta_value, 'i:%d;', '') WHERE meta_key = 'learndash_course_users' AND meta_value LIKE %s",
+                $user_id,
+                '%i:' . $user_id . ';%'
+            ));
+            $success_messages[] = 'Removed from course users lists';
+            
+            // Remove user from wrld course users lists
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(meta_value, 'i:%d;', '') WHERE meta_key = 'wrld_course_users' AND meta_value LIKE %s",
+                $user_id,
+                '%i:' . $user_id . ';%'
+            ));
+            $success_messages[] = 'Removed from wrld course users lists';
+            
+            // Remove user from group users lists
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(meta_value, 'i:%d;', '') WHERE meta_key = 'learndash_group_users' AND meta_value LIKE %s",
+                $user_id,
+                '%i:' . $user_id . ';%'
+            ));
+            $success_messages[] = 'Removed from group users lists';
+            
+            // Remove user from wrld group users lists
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(meta_value, 'i:%d;', '') WHERE meta_key = 'wrld_group_users' AND meta_value LIKE %s",
+                $user_id,
+                '%i:' . $user_id . ';%'
+            ));
+            $success_messages[] = 'Removed from wrld group users lists';
+            
+            // === PHASE 5: COMPREHENSIVE POSTMETA CLEANUP ===
+            
+            // Remove user from all serialized arrays in postmeta (multiple formats)
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(meta_value, 'i:%d;', '') WHERE meta_value LIKE %s",
+                $user_id,
+                '%i:' . $user_id . ';%'
+            ));
+            $success_messages[] = 'Removed from all serialized arrays in postmeta';
+            
+            // Remove user from string format references
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(meta_value, 's:3:\"%d\";', '') WHERE meta_value LIKE %s",
+                $user_id,
+                '%s:3:"' . $user_id . '";%'
+            ));
+            $success_messages[] = 'Removed from string format references';
+            
+            // Remove user from JSON and other formats
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(REPLACE(REPLACE(meta_value, '\"%d\"', ''), ':%d:', ''), '%d,', '') WHERE meta_value LIKE %s",
+                $user_id,
+                $user_id,
+                $user_id,
+                '%' . $user_id . '%'
+            ));
+            $success_messages[] = 'Removed from JSON and other formats';
+            
+            // === PHASE 6: LEARNDASH-SPECIFIC META CLEANUP ===
+            
+            // Remove user from quiz questions and lesson records
+            $wpdb->query($wpdb->prepare(
+                "UPDATE edc_postmeta SET meta_value = REPLACE(REPLACE(REPLACE(meta_value, 'i:%d;', ''), ':%d,', ''), '%d:', '') WHERE meta_key IN ('ld_quiz_questions', 'course_access_list', 'learndash_course_users', 'wrld_course_users', 'learndash_group_users') AND meta_value LIKE %s",
+                $user_id,
+                $user_id,
+                $user_id,
+                '%' . $user_id . '%'
+            ));
+            $success_messages[] = 'Removed from quiz questions and lesson records';
+            
+            // === PHASE 7: LEARNDASH FUNCTIONS (IF AVAILABLE) ===
+            
+            // Call LearnDash functions if available
+            if (function_exists('ld_update_course_access') && $course_id) {
+                ld_update_course_access($user_id, $course_id, true);
+                $success_messages[] = 'Called ld_update_course_access for course ' . $course_id;
             }
             
-            // Method 4: Remove course progress (using edc_ prefix)
-            $wpdb->delete(
-                'edc_usermeta',
-                [
-                    'user_id' => $user_id,
-                    'meta_key' => '_sfwd-course_progress_' . $course_id
-                ],
-                ['%d', '%s']
-            );
-            $success_messages[] = 'Course progress deleted (edc_usermeta)';
+            if (function_exists('learndash_user_unenroll_course') && $course_id) {
+                learndash_user_unenroll_course($user_id, $course_id);
+                $success_messages[] = 'Called learndash_user_unenroll_course for course ' . $course_id;
+            }
             
-            // Method 5: Remove course activity (using edc_ prefix)
-            $wpdb->delete(
+            // === VERIFICATION ===
+            
+            // Count remaining references for verification
+            $remaining_usermeta = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM edc_usermeta WHERE user_id = %d AND (meta_key LIKE '%course%' OR meta_key LIKE '%learndash%' OR meta_key LIKE '%group%')",
+                $user_id
+            ));
+            
+            $remaining_postmeta = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM edc_postmeta WHERE meta_value LIKE %s",
+                '%' . $user_id . '%'
+            ));
+            
+            $remaining_activity = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM edc_learndash_user_activity WHERE user_id = %d",
+                $user_id
+            ));
+            
+            $success_messages[] = "Verification: {$remaining_usermeta} usermeta, {$remaining_postmeta} postmeta, {$remaining_activity} activity records remaining";
+            
+            wp_send_json_success('COMPREHENSIVE DISCONNECTION COMPLETED: ' . implode(' | ', $success_messages));
+        } elseif ($action === 'connect') {
+            // COMPREHENSIVE CONNECTION LOGIC - Based on documented successful connection methods
+            global $wpdb;
+            $success_messages = [];
+            
+            // === PHASE 1: USER META SETUP ===
+            
+            // Set course access expiration (permanent or with expiration)
+            $expiration_timestamp = ($expiration === 'permanent') ? 0 : strtotime($expiration);
+            update_user_meta($user_id, "course_{$course_id}_access_expires", $expiration_timestamp);
+            $success_messages[] = 'Set course access expiration: ' . ($expiration === 'permanent' ? 'Permanent' : date('Y-m-d H:i:s', $expiration_timestamp));
+            
+            // Set course enrollment timestamp
+            update_user_meta($user_id, "learndash_course_{$course_id}_enrolled_at", current_time('timestamp'));
+            $success_messages[] = 'Set course enrollment timestamp';
+            
+            // Add to user's course list
+            $user_courses = get_user_meta($user_id, '_sfwd-courses', true);
+            if (!is_array($user_courses)) {
+                $user_courses = [];
+            }
+            if (!in_array($course_id, $user_courses)) {
+                $user_courses[] = $course_id;
+                update_user_meta($user_id, '_sfwd-courses', $user_courses);
+                $success_messages[] = 'Added to user course list (_sfwd-courses)';
+            }
+            
+            // === PHASE 2: LEARNDASH ACTIVITY SETUP ===
+            
+            // Create LearnDash activity record
+            $wpdb->insert(
                 'edc_learndash_user_activity',
                 [
                     'user_id' => $user_id,
-                    'course_id' => $course_id
+                    'post_id' => $course_id,
+                    'course_id' => $course_id,
+                    'activity_type' => 'course',
+                    'activity_status' => 1,
+                    'activity_started' => current_time('timestamp'),
+                    'activity_completed' => null,
+                    'activity_updated' => current_time('timestamp')
                 ],
-                ['%d', '%d']
+                ['%d', '%d', '%d', '%s', '%d', '%d', '%s', '%d']
             );
-            $success_messages[] = 'LearnDash activity records deleted (edc_learndash_user_activity)';
+            $success_messages[] = 'Created LearnDash activity record';
             
-            // Method 6: Remove LearnDash enrollment records (using edc_ prefix)
-            $wpdb->delete(
-                'edc_usermeta',
-                [
-                    'user_id' => $user_id,
-                    'meta_key' => 'learndash_course_' . $course_id . '_enrolled_at'
-                ],
-                ['%d', '%s']
-            );
-            $success_messages[] = 'LearnDash enrollment record deleted (learndash_course_' . $course_id . '_enrolled_at)';
+            // === PHASE 3: POSTMETA SETUP (COURSE LISTS) ===
             
-            // Method 7: Remove any other LearnDash course-specific meta
-            $wpdb->query($wpdb->prepare(
-                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE %s",
-                $user_id,
-                'learndash_course_' . $course_id . '_%'
-            ));
-            $success_messages[] = 'All LearnDash course-specific meta deleted';
-            
-            // Method 8: Remove from LearnDash course users list (if exists)
-            $course_users_meta = $wpdb->get_var($wpdb->prepare(
-                "SELECT meta_value FROM edc_postmeta WHERE post_id = %d AND meta_key = 'learndash_course_users'",
-                $course_id
-            ));
-            if ($course_users_meta) {
-                $course_users = maybe_unserialize($course_users_meta);
-                if (is_array($course_users) && in_array($user_id, $course_users)) {
-                    $course_users = array_diff($course_users, [$user_id]);
-                    $wpdb->replace(
-                        'edc_postmeta',
-                        [
-                            'post_id' => $course_id,
-                            'meta_key' => 'learndash_course_users',
-                            'meta_value' => maybe_serialize($course_users)
-                        ],
-                        ['%d', '%s', '%s']
-                    );
-                    $success_messages[] = 'Removed from course users list (learndash_course_users)';
-                }
+            // Add user to course access list
+            $course_access_list = get_post_meta($course_id, 'course_access_list', true);
+            if (!is_array($course_access_list)) {
+                $course_access_list = [];
+            }
+            if (!in_array($user_id, $course_access_list)) {
+                $course_access_list[] = $user_id;
+                update_post_meta($course_id, 'course_access_list', $course_access_list);
+                $success_messages[] = 'Added to course access list';
             }
             
-            wp_send_json_success('Course access disabled: ' . implode(', ', $success_messages));
+            // Add user to course users list (learndash_course_users)
+            $course_users = get_post_meta($course_id, 'learndash_course_users', true);
+            if (!is_array($course_users)) {
+                $course_users = [];
+            }
+            if (!in_array($user_id, $course_users)) {
+                $course_users[] = $user_id;
+                update_post_meta($course_id, 'learndash_course_users', $course_users);
+                $success_messages[] = 'Added to learndash_course_users list';
+            }
+            
+            // Add user to wrld course users list
+            $wrld_course_users = get_post_meta($course_id, 'wrld_course_users', true);
+            if (!is_array($wrld_course_users)) {
+                $wrld_course_users = [];
+            }
+            if (!in_array($user_id, $wrld_course_users)) {
+                $wrld_course_users[] = $user_id;
+                update_post_meta($course_id, 'wrld_course_users', $wrld_course_users);
+                $success_messages[] = 'Added to wrld_course_users list';
+            }
+            
+            // === PHASE 4: LEARNDASH FUNCTIONS (IF AVAILABLE) ===
+            
+            // Call LearnDash enrollment functions if available
+            if (function_exists('ld_update_course_access')) {
+                ld_update_course_access($user_id, $course_id, false);
+                $success_messages[] = 'Called ld_update_course_access for enrollment';
+            }
+            
+            if (function_exists('learndash_user_enroll_course')) {
+                learndash_user_enroll_course($user_id, $course_id);
+                $success_messages[] = 'Called learndash_user_enroll_course';
+            }
+            
+            // === PHASE 5: WOOCOMMERCE INTEGRATION (OPTIONAL) ===
+            
+            // If this is part of a WooCommerce order, set the order connection
+            if (isset($_POST['order_id']) && !empty($_POST['order_id'])) {
+                $order_id = intval($_POST['order_id']);
+                update_user_meta($user_id, "course_{$course_id}_order_id", $order_id);
+                update_user_meta($user_id, "_learndash_woocommerce_enrolled_{$course_id}", current_time('timestamp'));
+                $success_messages[] = 'Set WooCommerce order connection: ' . $order_id;
+            }
+            
+            // === VERIFICATION ===
+            
+            // Verify connection was successful
+            $course_access_expires = get_user_meta($user_id, "course_{$course_id}_access_expires", true);
+            $course_enrolled_at = get_user_meta($user_id, "learndash_course_{$course_id}_enrolled_at", true);
+            $user_courses_check = get_user_meta($user_id, '_sfwd-courses', true);
+            
+            $verification_status = [];
+            $verification_status[] = 'Access expires: ' . ($course_access_expires === '0' ? 'Permanent' : date('Y-m-d H:i:s', $course_access_expires));
+            $verification_status[] = 'Enrolled at: ' . date('Y-m-d H:i:s', $course_enrolled_at);
+            $verification_status[] = 'In user course list: ' . (is_array($user_courses_check) && in_array($course_id, $user_courses_check) ? 'Yes' : 'No');
+            
+            $success_messages[] = 'Verification: ' . implode(', ', $verification_status);
+            
+            wp_send_json_success('COMPREHENSIVE CONNECTION COMPLETED: ' . implode(' | ', $success_messages));
         } else {
             // Update user meta with new expiration (using correct edc_ prefix)
             global $wpdb;
