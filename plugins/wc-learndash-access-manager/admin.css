@@ -1,0 +1,174 @@
+/* WooCommerce LearnDash Access Manager Admin Styles */
+
+.wc-learndash-access-manager {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+.wc-learndash-access-manager h4 {
+    margin-top: 0;
+    color: #2271b1;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.wc-learndash-access-preview {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 3px;
+    font-size: 13px;
+}
+
+.wc-learndash-access-preview strong {
+    color: #1d2327;
+}
+
+.wc-learndash-duration-info {
+    background: #e7f3ff;
+    border-left: 4px solid #2271b1;
+    padding: 8px 12px;
+    margin: 8px 0;
+    font-size: 12px;
+}
+
+.wc-learndash-course-list {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 5px;
+    background: #fff;
+}
+
+.wc-learndash-course-item {
+    padding: 5px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+}
+
+.wc-learndash-course-item:hover {
+    background: #f0f0f1;
+}
+
+.wc-learndash-course-item.selected {
+    background: #2271b1;
+    color: #fff;
+}
+
+.wc-learndash-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.wc-learndash-status.active {
+    background: #00a32a;
+    color: #fff;
+}
+
+.wc-learndash-status.expired {
+    background: #d63638;
+    color: #fff;
+}
+
+.wc-learndash-status.no-expiration {
+    background: #2271b1;
+    color: #fff;
+}
+
+/* Product list column styling */
+.column-learndash_access {
+    width: 150px;
+}
+
+.column-learndash_access strong {
+    color: #2271b1;
+    font-size: 12px;
+}
+
+.column-learndash_access small {
+    color: #646970;
+    font-style: italic;
+}
+
+/* Order admin styling */
+.wc-learndash-order-access {
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+.wc-learndash-order-access h4 {
+    margin: 0 0 10px 0;
+    color: #2271b1;
+}
+
+.wc-learndash-course-access-item {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.wc-learndash-course-access-item:last-child {
+    border-bottom: none;
+}
+
+.wc-learndash-course-title {
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.wc-learndash-course-expires {
+    font-size: 12px;
+    color: #646970;
+}
+
+/* User profile styling */
+.wc-learndash-user-access {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.wc-learndash-user-access th {
+    background: #f6f7f7;
+    padding: 12px;
+    font-weight: 600;
+    border-bottom: 1px solid #c3c4c7;
+}
+
+.wc-learndash-user-access td {
+    padding: 12px;
+    border-bottom: 1px solid #f0f0f1;
+}
+
+.wc-learndash-user-access tr:last-child td {
+    border-bottom: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 782px) {
+    .wc-learndash-access-manager {
+        padding: 10px;
+    }
+    
+    .wc-learndash-course-list {
+        max-height: 120px;
+    }
+    
+    .column-learndash_access {
+        width: auto;
+    }
+}

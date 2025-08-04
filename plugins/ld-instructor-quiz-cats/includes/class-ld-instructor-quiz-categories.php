@@ -34,6 +34,9 @@ class LD_Instructor_Quiz_Categories {
         
         // Add reassignment debug page
         add_action('admin_menu', array($this, 'add_reassignment_debug_page'));
+        
+        // Add category diagnostic page
+        add_action('admin_menu', array($this, 'add_category_diagnostic_page'));
     }
     
     /**
@@ -69,8 +72,16 @@ class LD_Instructor_Quiz_Categories {
             'taxonomy' => $used_taxonomy,
             'hide_empty' => false,
             'orderby' => 'name',
-            'order' => 'ASC'
+            'order' => 'ASC',
+            'number' => 0  // Ensure no limit is applied
         ));
+        
+        // Debug: Log category count
+        error_log('LD Quiz Categories: Found ' . count($question_categories) . ' categories in taxonomy: ' . $used_taxonomy);
+        if (count($question_categories) > 0) {
+            $category_names = array_map(function($cat) { return $cat->name; }, array_slice($question_categories, 0, 5));
+            error_log('LD Quiz Categories: First 5 categories: ' . implode(', ', $category_names));
+        }
         
         // Get currently selected categories
         $selected_categories = get_post_meta($post->ID, '_ld_quiz_question_categories', true);
@@ -1352,6 +1363,162 @@ class LD_Instructor_Quiz_Categories {
         
         echo "<hr>";
         echo "<p><small>Debug completed at " . date('Y-m-d H:i:s') . "</small></p>";
+    }
+    
+    /**
+     * Add category diagnostic page
+     */
+    public function add_category_diagnostic_page() {
+        add_submenu_page(
+            'edit.php?post_type=sfwd-quiz',
+            'Category Diagnostic',
+            '📊 Categories',
+            'manage_options',
+            'ld-category-diagnostic',
+            array($this, 'render_category_diagnostic_page')
+        );
+    }
+    
+    /**
+     * Render the category diagnostic page
+     */
+    public function render_category_diagnostic_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die('You do not have sufficient permissions to access this page.');
+        }
+        
+        echo '<div class="wrap">';
+        echo '<h1>📊 Category Loading Diagnostic</h1>';
+        echo '<p>Analyzing why not all categories are being loaded...</p>';
+        
+        // Get the taxonomy being used
+        $used_taxonomy = $this->get_used_taxonomy();
+        echo "<h2>🔍 Taxonomy Analysis</h2>";
+        echo "<p><strong>Used Taxonomy:</strong> {$used_taxonomy}</p>";
+        
+        // Test different ways of getting categories
+        echo "<h3>Method 1: Standard get_terms (current method)</h3>";
+        $categories_method1 = get_terms(array(
+            'taxonomy' => $used_taxonomy,
+            'hide_empty' => false,
+            'orderby' => 'name',
+            'order' => 'ASC',
+            'number' => 0
+        ));
+        
+        echo "<p>Found <strong>" . count($categories_method1) . "</strong> categories</p>";
+        if (!empty($categories_method1)) {
+            echo "<div style='max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;'>";
+            foreach ($categories_method1 as $cat) {
+                echo "<p>• {$cat->name} (ID: {$cat->term_id}, Count: {$cat->count})</p>";
+            }
+            echo "</div>";
+        }
+        
+        echo "<h3>Method 2: All terms (no filters)</h3>";
+        $categories_method2 = get_terms(array(
+            'taxonomy' => $used_taxonomy,
+            'hide_empty' => false,
+            'number' => 0,
+            'orderby' => 'none'
+        ));
+        
+        echo "<p>Found <strong>" . count($categories_method2) . "</strong> categories</p>";
+        
+        echo "<h3>Method 3: Direct taxonomy check</h3>";
+        $taxonomy_exists = taxonomy_exists($used_taxonomy);
+        echo "<p>Taxonomy '{$used_taxonomy}' exists: " . ($taxonomy_exists ? 'Yes' : 'No') . "</p>";
+        
+        if ($taxonomy_exists) {
+            $taxonomy_object = get_taxonomy($used_taxonomy);
+            echo "<p>Taxonomy object types: " . implode(', ', $taxonomy_object->object_type) . "</p>";
+        }
+        
+        echo "<h3>Method 4: Database direct query</h3>";
+        global $wpdb;
+        $direct_count = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s",
+            $used_taxonomy
+        ));
+        echo "<p>Direct database count: <strong>{$direct_count}</strong> terms</p>";
+        
+        // Get sample terms directly from database
+        $direct_terms = $wpdb->get_results($wpdb->prepare(
+            "SELECT t.term_id, t.name, tt.count 
+             FROM {$wpdb->terms} t 
+             JOIN {$wpdb->term_taxonomy} tt ON t.term_id = tt.term_id 
+             WHERE tt.taxonomy = %s 
+             ORDER BY t.name ASC",
+            $used_taxonomy
+        ));
+        
+        if (!empty($direct_terms)) {
+            echo "<h4>Direct database results (first 10):</h4>";
+            echo "<div style='max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;'>";
+            foreach (array_slice($direct_terms, 0, 10) as $term) {
+                echo "<p>• {$term->name} (ID: {$term->term_id}, Count: {$term->count})</p>";
+            }
+            echo "</div>";
+        }
+        
+        echo "<h2>🔧 Comparison Analysis</h2>";
+        
+        if (count($categories_method1) !== $direct_count) {
+            echo "<div class='notice notice-warning'>";
+            echo "<p>⚠️ <strong>MISMATCH DETECTED!</strong></p>";
+            echo "<p>get_terms() returned " . count($categories_method1) . " categories, but database has {$direct_count} terms.</p>";
+            echo "<p>This suggests WordPress is filtering or limiting the results.</p>";
+            echo "</div>";
+            
+            // Check for common WordPress filters
+            echo "<h3>Potential Issues:</h3>";
+            echo "<ul>";
+            echo "<li>WordPress may be applying default limits (usually 50-100 terms)</li>";
+            echo "<li>Some terms might be marked as 'hidden' or have special meta</li>";
+            echo "<li>Plugin conflicts might be filtering the results</li>";
+            echo "<li>Memory or performance limits might be truncating results</li>";
+            echo "</ul>";
+            
+            // Try to get ALL terms with different parameters
+            echo "<h3>Method 5: Force all terms</h3>";
+            $categories_method5 = get_terms(array(
+                'taxonomy' => $used_taxonomy,
+                'hide_empty' => false,
+                'number' => 0,
+                'orderby' => 'none',
+                'suppress_filter' => true,
+                'update_term_meta_cache' => false
+            ));
+            echo "<p>Forced method found <strong>" . count($categories_method5) . "</strong> categories</p>";
+            
+        } else {
+            echo "<div class='notice notice-success'>";
+            echo "<p>✅ <strong>COUNTS MATCH!</strong></p>";
+            echo "<p>get_terms() and database counts match. All categories should be loading correctly.</p>";
+            echo "</div>";
+        }
+        
+        echo "<h2>🔄 Recommended Fix</h2>";
+        
+        if (count($categories_method1) < $direct_count) {
+            echo "<div class='notice notice-info'>";
+            echo "<p><strong>Solution:</strong> Update the get_terms() call to force loading all categories:</p>";
+            echo "<pre style='background: #f0f0f0; padding: 10px;'>";
+            echo "\$question_categories = get_terms(array(\n";
+            echo "    'taxonomy' => \$used_taxonomy,\n";
+            echo "    'hide_empty' => false,\n";
+            echo "    'orderby' => 'name',\n";
+            echo "    'order' => 'ASC',\n";
+            echo "    'number' => 0,  // No limit\n";
+            echo "    'suppress_filter' => true  // Bypass filters\n";
+            echo "));";
+            echo "</pre>";
+            echo "</div>";
+        }
+        
+        echo "<hr>";
+        echo "<p><small>Diagnostic completed at " . date('Y-m-d H:i:s') . "</small></p>";
+        echo '</div>';
     }
     
     /**
