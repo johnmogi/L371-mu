@@ -16,6 +16,7 @@ class Unified_Course_Expiration_Manager {
         add_action('admin_menu', [$this, 'add_admin_menu']);
         add_action('wp_ajax_unified_set_course_expiration', [$this, 'ajax_set_course_expiration']);
         add_action('wp_ajax_unified_get_user_courses', [$this, 'ajax_get_user_courses']);
+        add_action('wp_ajax_get_available_courses', [$this, 'ajax_get_available_courses']);
         add_action('wp_ajax_unified_bulk_update', [$this, 'ajax_bulk_update']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
     }
@@ -266,7 +267,9 @@ class Unified_Course_Expiration_Manager {
                     $('#set-expiry-dialog').dialog({
                         autoOpen: false,
                         modal: true,
-                        width: 400,
+                        width: 500,
+                        height: 350,
+                        position: { my: 'center', at: 'center', of: window },
                         title: 'Set Course Expiration'
                     });
                     
@@ -274,6 +277,8 @@ class Unified_Course_Expiration_Manager {
                         autoOpen: false,
                         modal: true,
                         width: 500,
+                        height: 400,
+                        position: { my: 'center', at: 'center', of: window },
                         title: 'Set Expiration Date'
                     });
                     
@@ -304,8 +309,10 @@ class Unified_Course_Expiration_Manager {
                     window.currentUserId = userId;
                     window.currentCourseId = courseId;
                     
-                    // If courseId is not provided, show course ID dialog first
+                    // If courseId is not provided, show course selection dialog first
                     if (!courseId) {
+                        // Load available courses first
+                        loadAvailableCourses();
                         $('#set-expiry-dialog').dialog('open');
                         return;
                     }
@@ -318,13 +325,94 @@ class Unified_Course_Expiration_Manager {
                 }
             };
             
+            // Function to load available courses
+            window.loadAvailableCourses = function() {
+                console.log('Loading available courses...');
+                
+                // Show loading state
+                jQuery('#course-select').html('<option value="">Loading courses...</option>');
+                
+                jQuery.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'get_available_courses',
+                        nonce: '<?php echo wp_create_nonce('unified_course_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        console.log('AJAX Response:', response);
+                        
+                        if (response && response.success && response.data && response.data.length > 0) {
+                            var courseSelect = jQuery('#course-select');
+                            courseSelect.empty();
+                            courseSelect.append('<option value="">-- Select a Course --</option>');
+                            
+                            response.data.forEach(function(course) {
+                                courseSelect.append('<option value="' + course.id + '">' + course.title + ' (ID: ' + course.id + ')</option>');
+                            });
+                            
+                            console.log('Successfully loaded ' + response.data.length + ' courses');
+                        } else {
+                            console.error('No courses found or invalid response:', response);
+                            jQuery('#course-select').html('<option value="">No courses found</option>');
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        console.error('AJAX Error:', {
+                            status: status,
+                            error: error,
+                            responseText: xhr.responseText
+                        });
+                        jQuery('#course-select').html('<option value="">Error: ' + error + '</option>');
+                    }
+                });
+            };
+            
+            // Function to proceed from course selection to date input
+            window.proceedToDateInput = function() {
+                console.log('proceedToDateInput called');
+                
+                var courseSelect = jQuery('#course-select');
+                var courseId = courseSelect.val();
+                
+                console.log('Course select element:', courseSelect.length);
+                console.log('Course ID value:', courseId);
+                console.log('All options:', courseSelect.find('option').map(function() { return this.value + ':' + this.text; }).get());
+                
+                if (!courseId || courseId.trim() === '' || courseId === 'Loading courses...' || courseId === '-- Select a Course --') {
+                    alert('Please select a course from the dropdown');
+                    return;
+                }
+                
+                console.log('Valid course ID selected:', courseId);
+                window.currentCourseId = parseInt(courseId);
+                
+                // Close course selection dialog
+                jQuery('#set-expiry-dialog').dialog('close');
+                
+                // Open expiration date dialog with proper positioning
+                jQuery('#expiration-date-dialog').dialog({
+                    modal: true,
+                    width: 500,
+                    height: 400,
+                    position: { my: 'center', at: 'center', of: window },
+                    title: 'Set Expiration Date'
+                });
+                
+                console.log('Opened expiration date dialog for course:', courseId);
+            };
+            
             // Function to process the actual expiration setting
             window.processExpirationSetting = function(courseId, expirationDate) {
                 console.log('Processing expiration with courseId:', courseId, 'date:', expirationDate);
                 
                 try {
                     var expirationTimestamp = 0;
-                    if (expirationDate.toLowerCase() !== 'permanent') {
+                    
+                    if (expirationDate === 'disable') {
+                        // Set to -1 to indicate disabled/removed access
+                        expirationTimestamp = -1;
+                    } else if (expirationDate.toLowerCase() !== 'permanent') {
                         var dateObj = new Date(expirationDate + ' 23:59:59');
                         if (isNaN(dateObj.getTime())) {
                             alert('Invalid date format. Please use YYYY-MM-DD');
@@ -394,7 +482,13 @@ class Unified_Course_Expiration_Manager {
                 var expirationType = jQuery('#expiration-type').val();
                 var expirationDate;
                 
-                if (expirationType === 'custom') {
+                if (expirationType === 'disable') {
+                    // Confirm before disabling access
+                    if (!confirm('⚠️ Are you sure you want to disable course access for this user? This will immediately remove their access to the course.')) {
+                        return;
+                    }
+                    expirationDate = 'disable';
+                } else if (expirationType === 'custom') {
                     expirationDate = jQuery('#custom-date-input').val();
                     if (!expirationDate) {
                         alert('Please select a custom date');
@@ -612,10 +706,10 @@ class Unified_Course_Expiration_Manager {
     private function display_student_row($user) {
         global $wpdb;
         
-        // Get course expiration data for this user
+        // Get course expiration data for this user (using correct edc_ prefix)
         $course_data = $wpdb->get_results($wpdb->prepare("
             SELECT meta_key, meta_value
-            FROM {$wpdb->usermeta}
+            FROM edc_usermeta
             WHERE user_id = %d AND meta_key LIKE 'course_%_access_expires'
             ORDER BY meta_key
         ", $user->ID));
@@ -748,8 +842,15 @@ class Unified_Course_Expiration_Manager {
             <form id="set-expiry-form">
                 <table class="form-table">
                     <tr>
-                        <th><label for="course-id-input">Course ID:</label></th>
-                        <td><input type="number" id="course-id-input" name="course_id" placeholder="e.g., 123" required style="width: 100%;"></td>
+                        <th><label for="course-select">Select Course:</label></th>
+                        <td>
+                            <select id="course-select" name="course_id" required style="width: 100%; padding: 8px;">
+                                <option value="">Loading courses...</option>
+                            </select>
+                            <div style="margin-top: 5px; font-size: 12px; color: #666;">
+                                Select the course you want to manage access for
+                            </div>
+                        </td>
                     </tr>
                 </table>
                 <p>
@@ -773,6 +874,7 @@ class Unified_Course_Expiration_Manager {
                                 <option value="6_months">6 Months from now</option>
                                 <option value="1_year">1 Year from now</option>
                                 <option value="custom">Custom Date</option>
+                                <option value="disable" style="color: #d63638; font-weight: bold;">🚫 Disable Access (Remove Course)</option>
                             </select>
                         </td>
                     </tr>
@@ -805,16 +907,148 @@ class Unified_Course_Expiration_Manager {
             wp_send_json_error('Missing required parameters');
         }
         
-        // Update user meta
         $meta_key = 'course_' . $course_id . '_access_expires';
-        update_user_meta($user_id, $meta_key, $expiration);
         
-        // Update LearnDash course access if function exists
-        if (function_exists('ld_update_course_access')) {
-            ld_update_course_access($user_id, $course_id, false, $expiration);
+        if ($expiration === -1) {
+            // Disable/remove course access (using correct edc_ prefix)
+            global $wpdb;
+            $wpdb->delete(
+                'edc_usermeta',
+                [
+                    'user_id' => $user_id,
+                    'meta_key' => $meta_key
+                ],
+                ['%d', '%s']
+            );
+            
+            $success_messages = [];
+            $success_messages[] = 'User meta deleted from edc_usermeta';
+            
+            // Remove from LearnDash using multiple methods to ensure removal
+            
+            // Method 1: Remove user from course using LearnDash function
+            if (function_exists('ld_update_course_access')) {
+                $result1 = ld_update_course_access($user_id, $course_id, true);
+                $success_messages[] = 'ld_update_course_access called (remove=true)';
+            }
+            
+            // Method 2: Use learndash_user_unenroll_course if available
+            if (function_exists('learndash_user_unenroll_course')) {
+                $result2 = learndash_user_unenroll_course($user_id, $course_id);
+                $success_messages[] = 'learndash_user_unenroll_course called';
+            }
+            
+            // Method 3: Remove from user course meta directly (using edc_ prefix)
+            $user_courses_result = $wpdb->get_var($wpdb->prepare(
+                "SELECT meta_value FROM edc_usermeta WHERE user_id = %d AND meta_key = '_sfwd-courses'",
+                $user_id
+            ));
+            if ($user_courses_result) {
+                $user_courses = maybe_unserialize($user_courses_result);
+                if (is_array($user_courses) && in_array($course_id, $user_courses)) {
+                    $user_courses = array_diff($user_courses, [$course_id]);
+                    $wpdb->replace(
+                        'edc_usermeta',
+                        [
+                            'user_id' => $user_id,
+                            'meta_key' => '_sfwd-courses',
+                            'meta_value' => maybe_serialize($user_courses)
+                        ],
+                        ['%d', '%s', '%s']
+                    );
+                    $success_messages[] = 'Removed from _sfwd-courses meta (edc_usermeta)';
+                }
+            }
+            
+            // Method 4: Remove course progress (using edc_ prefix)
+            $wpdb->delete(
+                'edc_usermeta',
+                [
+                    'user_id' => $user_id,
+                    'meta_key' => '_sfwd-course_progress_' . $course_id
+                ],
+                ['%d', '%s']
+            );
+            $success_messages[] = 'Course progress deleted (edc_usermeta)';
+            
+            // Method 5: Remove course activity (using edc_ prefix)
+            $wpdb->delete(
+                'edc_learndash_user_activity',
+                [
+                    'user_id' => $user_id,
+                    'course_id' => $course_id
+                ],
+                ['%d', '%d']
+            );
+            $success_messages[] = 'LearnDash activity records deleted (edc_learndash_user_activity)';
+            
+            // Method 6: Remove LearnDash enrollment records (using edc_ prefix)
+            $wpdb->delete(
+                'edc_usermeta',
+                [
+                    'user_id' => $user_id,
+                    'meta_key' => 'learndash_course_' . $course_id . '_enrolled_at'
+                ],
+                ['%d', '%s']
+            );
+            $success_messages[] = 'LearnDash enrollment record deleted (learndash_course_' . $course_id . '_enrolled_at)';
+            
+            // Method 7: Remove any other LearnDash course-specific meta
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM edc_usermeta WHERE user_id = %d AND meta_key LIKE %s",
+                $user_id,
+                'learndash_course_' . $course_id . '_%'
+            ));
+            $success_messages[] = 'All LearnDash course-specific meta deleted';
+            
+            // Method 8: Remove from LearnDash course users list (if exists)
+            $course_users_meta = $wpdb->get_var($wpdb->prepare(
+                "SELECT meta_value FROM edc_postmeta WHERE post_id = %d AND meta_key = 'learndash_course_users'",
+                $course_id
+            ));
+            if ($course_users_meta) {
+                $course_users = maybe_unserialize($course_users_meta);
+                if (is_array($course_users) && in_array($user_id, $course_users)) {
+                    $course_users = array_diff($course_users, [$user_id]);
+                    $wpdb->replace(
+                        'edc_postmeta',
+                        [
+                            'post_id' => $course_id,
+                            'meta_key' => 'learndash_course_users',
+                            'meta_value' => maybe_serialize($course_users)
+                        ],
+                        ['%d', '%s', '%s']
+                    );
+                    $success_messages[] = 'Removed from course users list (learndash_course_users)';
+                }
+            }
+            
+            wp_send_json_success('Course access disabled: ' . implode(', ', $success_messages));
+        } else {
+            // Update user meta with new expiration (using correct edc_ prefix)
+            global $wpdb;
+            $wpdb->replace(
+                'edc_usermeta',
+                [
+                    'user_id' => $user_id,
+                    'meta_key' => $meta_key,
+                    'meta_value' => $expiration
+                ],
+                ['%d', '%s', '%s']
+            );
+            
+            // Add user to course if not already enrolled
+            if (function_exists('ld_update_course_access')) {
+                ld_update_course_access($user_id, $course_id, false, $expiration);
+            }
+            
+            // Also ensure user is enrolled in LearnDash
+            if (function_exists('learndash_user_enroll_course')) {
+                learndash_user_enroll_course($user_id, $course_id);
+            }
+            
+            wp_send_json_success('Course expiration updated successfully');
         }
-        
-        wp_send_json_success('Course expiration updated successfully');
     }
     
     public function ajax_get_user_courses() {
@@ -826,65 +1060,39 @@ class Unified_Course_Expiration_Manager {
         
         $user_id = intval($_POST['user_id']);
         if (!$user_id) {
-            wp_send_json_error('Invalid user ID');
+            wp_send_json_error('Missing user ID');
         }
         
-        global $wpdb;
-        $course_data = $wpdb->get_results($wpdb->prepare("
-            SELECT meta_key, meta_value
-            FROM {$wpdb->usermeta}
-            WHERE user_id = %d AND meta_key LIKE 'course_%_access_expires'
-            ORDER BY meta_key
-        ", $user_id));
+        $courses = $this->get_user_course_access($user_id);
+        wp_send_json_success($courses);
+    }
+    
+    public function ajax_get_available_courses() {
+        check_ajax_referer('unified_course_nonce', 'nonce');
         
-        $user = get_user_by('ID', $user_id);
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
         
-        ob_start();
-        ?>
-        <h3>📚 Course Access for <?php echo esc_html($user->display_name); ?></h3>
+        // Get all LearnDash courses
+        $courses = get_posts([
+            'post_type' => 'sfwd-courses',
+            'post_status' => 'publish',
+            'numberposts' => -1,
+            'orderby' => 'title',
+            'order' => 'ASC'
+        ]);
         
-        <?php if (empty($course_data)): ?>
-            <p>No course access data found for this user.</p>
-        <?php else: ?>
-            <?php foreach ($course_data as $data): ?>
-                <?php
-                preg_match('/course_(\d+)_access_expires/', $data->meta_key, $matches);
-                $course_id = $matches[1] ?? 'Unknown';
-                $expires_timestamp = $data->meta_value;
-                $course_title = get_the_title($course_id) ?: "Course $course_id";
-                ?>
-                <div style="padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
-                    <h4><?php echo esc_html($course_title); ?> (ID: <?php echo $course_id; ?>)</h4>
-                    <?php if ($expires_timestamp == 0): ?>
-                        <p><strong>♾️ Permanent Access</strong></p>
-                    <?php else: ?>
-                        <?php
-                        $current_time = current_time('timestamp');
-                        $is_expired = $expires_timestamp < $current_time;
-                        $days_remaining = ceil(($expires_timestamp - $current_time) / DAY_IN_SECONDS);
-                        ?>
-                        <p>
-                            <strong><?php echo $is_expired ? '❌ Expired' : '✅ Active'; ?></strong><br>
-                            Expires: <?php echo date('d/m/Y H:i', $expires_timestamp); ?>
-                            <?php if (!$is_expired): ?>
-                                (<?php echo $days_remaining; ?> days remaining)
-                            <?php endif; ?>
-                        </p>
-                    <?php endif; ?>
-                    <button type="button" class="button button-small" onclick="setCourseExpiration(<?php echo $user_id; ?>, <?php echo $course_id; ?>)">
-                        ⏰ Update Expiration
-                    </button>
-                </div>
-            <?php endforeach; ?>
-        <?php endif; ?>
+        $course_list = [];
+        foreach ($courses as $course) {
+            $course_list[] = [
+                'id' => $course->ID,
+                'title' => $course->post_title,
+                'slug' => $course->post_name
+            ];
+        }
         
-        <hr>
-        <button type="button" class="button button-primary" onclick="setCourseExpiration(<?php echo $user_id; ?>, prompt('Enter Course ID to add:'))">
-            ➕ Add New Course Access
-        </button>
-        <?php
-        
-        wp_send_json_success(ob_get_clean());
+        wp_send_json_success($course_list);
     }
     
     public function ajax_bulk_update() {
