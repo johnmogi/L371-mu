@@ -309,15 +309,43 @@ class Unified_Course_Expiration_Manager {
                     window.currentUserId = userId;
                     window.currentCourseId = courseId;
                     
+                    // Update the current user ID in the modal
+                    $('#current-user-id').text(userId);
+                    
                     // If courseId is not provided, show course selection dialog first
                     if (!courseId) {
                         // Load available courses first
                         loadAvailableCourses();
+                        
+                        // Ensure dialog is initialized before opening
+                        if (!$('#set-expiry-dialog').hasClass('ui-dialog-content')) {
+                            $('#set-expiry-dialog').dialog({
+                                autoOpen: false,
+                                modal: true,
+                                width: 500,
+                                height: 350,
+                                position: { my: 'center', at: 'center', of: window },
+                                title: 'Select Course'
+                            });
+                        }
                         $('#set-expiry-dialog').dialog('open');
                         return;
                     }
                     
                     // If we have course ID, show expiration date dialog
+                    $('#selected-course-id').text(courseId);
+                    
+                    // Ensure dialog is initialized before opening
+                    if (!$('#expiration-date-dialog').hasClass('ui-dialog-content')) {
+                        $('#expiration-date-dialog').dialog({
+                            autoOpen: false,
+                            modal: true,
+                            width: 500,
+                            height: 400,
+                            position: { my: 'center', at: 'center', of: window },
+                            title: 'Set Expiration Date'
+                        });
+                    }
                     $('#expiration-date-dialog').dialog('open');
                 } catch (e) {
                     console.error('Error in setCourseExpiration:', e);
@@ -330,7 +358,7 @@ class Unified_Course_Expiration_Manager {
                 console.log('Loading available courses...');
                 
                 // Show loading state
-                jQuery('#course-select').html('<option value="">Loading courses...</option>');
+                jQuery('#course-selection').html('<option value="">Loading courses...</option>');
                 
                 jQuery.ajax({
                     url: ajaxurl,
@@ -343,7 +371,7 @@ class Unified_Course_Expiration_Manager {
                         console.log('AJAX Response:', response);
                         
                         if (response && response.success && response.data && response.data.length > 0) {
-                            var courseSelect = jQuery('#course-select');
+                            var courseSelect = jQuery('#course-selection');
                             courseSelect.empty();
                             courseSelect.append('<option value="">-- Select a Course --</option>');
                             
@@ -354,7 +382,7 @@ class Unified_Course_Expiration_Manager {
                             console.log('Successfully loaded ' + response.data.length + ' courses');
                         } else {
                             console.error('No courses found or invalid response:', response);
-                            jQuery('#course-select').html('<option value="">No courses found</option>');
+                            jQuery('#course-selection').html('<option value="">No courses found</option>');
                         }
                     },
                     error: function(xhr, status, error) {
@@ -363,7 +391,7 @@ class Unified_Course_Expiration_Manager {
                             error: error,
                             responseText: xhr.responseText
                         });
-                        jQuery('#course-select').html('<option value="">Error: ' + error + '</option>');
+                        jQuery('#course-selection').html('<option value="">Error: ' + error + '</option>');
                     }
                 });
             };
@@ -372,7 +400,7 @@ class Unified_Course_Expiration_Manager {
             window.proceedToDateInput = function() {
                 console.log('proceedToDateInput called');
                 
-                var courseSelect = jQuery('#course-select');
+                var courseSelect = jQuery('#course-selection');
                 var courseId = courseSelect.val();
                 
                 console.log('Course select element:', courseSelect.length);
@@ -456,9 +484,10 @@ class Unified_Course_Expiration_Manager {
             
             // Functions for modal dialogs
             window.proceedToDateInput = function() {
-                var courseId = jQuery('#course-id-input').val();
-                if (!courseId) {
-                    alert('Please enter a Course ID');
+                // Get the selected course from the dropdown, not from a text input
+                var courseId = jQuery('#course-selection').val();
+                if (!courseId || courseId === '') {
+                    alert('Please select a course from the dropdown');
                     return;
                 }
                 
@@ -599,6 +628,70 @@ class Unified_Course_Expiration_Manager {
             alert('Export functionality will be implemented in the next version.');
         }
         </script>
+        
+        <!-- Modal HTML Structures -->
+        <div id="set-expiry-dialog" title="Select Course" style="display: none;">
+            <div style="padding: 20px;">
+                <p><strong>Select a course to set expiration for User ID: <span id="current-user-id"></span></strong></p>
+                
+                <div style="margin: 15px 0;">
+                    <label for="course-selection"><strong>Choose Course:</strong></label><br>
+                    <select id="course-selection" style="width: 100%; padding: 8px; margin-top: 5px;">
+                        <option value="">Loading courses...</option>
+                    </select>
+                </div>
+                
+                <div style="text-align: center; margin-top: 20px;">
+                    <button type="button" class="button button-secondary" onclick="jQuery('#set-expiry-dialog').dialog('close')">Cancel</button>
+                    <button type="button" class="button button-primary" onclick="proceedToDateInput()">Next: Set Date</button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="expiration-date-dialog" title="Set Expiration Date" style="display: none;">
+            <div style="padding: 20px;">
+                <p><strong>Set expiration for Course ID: <span id="selected-course-id"></span></strong></p>
+                
+                <div style="margin: 15px 0;">
+                    <label for="expiration-type"><strong>Expiration Type:</strong></label><br>
+                    <select id="expiration-type" onchange="toggleCustomDate()" style="width: 100%; padding: 8px; margin-top: 5px;">
+                        <option value="permanent">♾️ Permanent Access</option>
+                        <option value="1_month">📅 1 Month</option>
+                        <option value="3_months">📅 3 Months</option>
+                        <option value="6_months">📅 6 Months</option>
+                        <option value="1_year">📅 1 Year</option>
+                        <option value="custom">📅 Custom Date</option>
+                        <option value="disable">❌ Disable Access</option>
+                    </select>
+                </div>
+                
+                <div id="custom-date-row" style="margin: 15px 0; display: none;">
+                    <label for="custom-date-input"><strong>Custom Date:</strong></label><br>
+                    <input type="date" id="custom-date-input" style="width: 100%; padding: 8px; margin-top: 5px;">
+                </div>
+                
+                <div style="text-align: center; margin-top: 20px;">
+                    <button type="button" class="button button-secondary" onclick="jQuery('#expiration-date-dialog').dialog('close')">Cancel</button>
+                    <button type="button" class="button button-primary" onclick="processExpirationFromDialog()">Set Expiration</button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="course-details-dialog" title="Course Details" style="display: none;">
+            <div id="course-details-content" style="padding: 20px;">
+                Loading course details...
+            </div>
+        </div>
+        
+        <div id="bulk-update-dialog" title="Bulk Update" style="display: none;">
+            <div style="padding: 20px;">
+                <p>Bulk update functionality will be implemented in the next version.</p>
+                <div style="text-align: center; margin-top: 20px;">
+                    <button type="button" class="button button-secondary" onclick="jQuery('#bulk-update-dialog').dialog('close')">Close</button>
+                </div>
+            </div>
+        </div>
+        
         <?php
     }
     
